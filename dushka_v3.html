@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#7c5cff">
+<title>Душка</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#f7f5ff;color:#24212d}
+.app{max-width:520px;margin:auto;min-height:100vh;padding:20px 16px 110px}
+h1{margin:4px 0 2px;font-size:30px}.date{color:#777;font-size:14px;margin-bottom:18px}
+.card{background:white;border-radius:24px;padding:18px;box-shadow:0 8px 30px #0000000d;margin-bottom:14px}
+.progress{height:9px;background:#eeeaf8;border-radius:9px;overflow:hidden}.bar{height:100%;width:0;background:#7c5cff;border-radius:9px;transition:.25s}
+.stats{display:flex;justify-content:space-between;font-size:13px;color:#777;margin-bottom:9px}
+.task{display:flex;align-items:center;gap:12px;padding:13px 2px;border-bottom:1px solid #eee}.task:last-child{border:0}
+.check{width:25px;height:25px;border:2px solid #bdb5d9;border-radius:50%;flex:none;background:white}.done .check{background:#7c5cff;border-color:#7c5cff}.done .check:after{content:"✓";color:white;display:block;text-align:center;line-height:21px}.done .txt{text-decoration:line-through;color:#999}
+.meta{font-size:11px;color:#8d879c;margin-top:3px}
+.voice{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);width:min(92%,480px);border:0;border-radius:22px;background:#7c5cff;color:white;padding:17px;font-size:17px;font-weight:700;box-shadow:0 12px 35px #7c5cff55}
+.voice.listening{background:#e14f72}
+.small{font-size:13px;color:#777}.row{display:flex;gap:8px}.input{flex:1;border:1px solid #ddd6ef;border-radius:14px;padding:13px;font-size:15px;outline:none}.add{border:0;border-radius:14px;background:#24212d;color:#fff;padding:0 16px}
+.empty{text-align:center;color:#999;padding:20px 0}
+.cal-day{min-height:42px;border:0;background:#f6f3fc;border-radius:10px;font-size:14px;position:relative;cursor:pointer;padding:0}
+.cal-day.other{opacity:.35}.cal-day.selected{background:#7c5cff;color:white}.cal-day.has:after{content:"";position:absolute;bottom:5px;left:50%;width:5px;height:5px;border-radius:50%;background:#e14f72;transform:translateX(-50%)}
+</style>
+</head>
+<body>
+<div class="app">
+  <h1>Душка 💜</h1>
+  <div class="date" id="date"></div>
+
+  <div class="card">
+    <div class="stats"><span id="count">0 / 0 выполнено</span><span id="percent">0%</span></div>
+    <div class="progress"><div class="bar" id="bar"></div></div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <input id="input" class="input" placeholder="Написать задачу...">
+      <button class="add" onclick="addTask()">＋</button>
+    </div>
+  </div>
+
+  <div class="card" style="padding:12px">
+  <button id="calendarToggle" type="button" onclick="toggleCalendar()" style="width:100%;border:0;background:none;display:flex;align-items:center;justify-content:space-between;padding:6px 2px;font-size:15px;font-weight:700;color:#24212d">
+    <span>📅 <span id="calendarLabel">Календарь</span></span><span id="calendarArrow">⌄</span>
+  </button>
+  <div id="calendarPanel" style="display:none;margin-top:12px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <button class="add" onclick="changeMonth(-1)">‹</button>
+      <b id="monthTitle"></b>
+      <button class="add" onclick="changeMonth(1)">›</button>
+    </div>
+    <div id="calendar" style="display:grid;grid-template-columns:repeat(7,1fr);gap:5px"></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px">
+      <span id="selectedDate" class="small"></span>
+      <button class="add" style="padding:8px 12px" onclick="goToday()">Сегодня</button>
+    </div>
+  </div>
+</div>
+
+<div class="card" id="tasks"></div>
+
+</div>
+
+<button class="voice" id="voice" onclick="voiceInput()">🎙️ Сказать задачу</button>
+
+<script>
+const KEY="dushka_tasks_v1";
+let tasks=JSON.parse(localStorage.getItem(KEY)||"[]");
+function localKey(d=new Date()){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`}
+let selectedDate=localKey();
+let calendarMonth=new Date(new Date().getFullYear(),new Date().getMonth(),1);
+const todayKey=localKey();
+
+document.getElementById("date").textContent=new Date().toLocaleDateString("ru-RU",{weekday:"long",day:"numeric",month:"long"});
+
+function save(){localStorage.setItem(KEY,JSON.stringify(tasks));render()}
+function dateFromText(text){
+  const t=text.toLowerCase().replace(/ё/g,"е").trim();
+  const now=new Date();
+  const result=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+
+  // Relative dates. Do not use \b here because JavaScript \b is ASCII-only.
+  if(/(^|[^а-яa-z])(послезавтра)(?=$|[^а-яa-z])/i.test(t)){
+    result.setDate(result.getDate()+2); return localKey(result);
+  }
+  if(/(^|[^а-яa-z])(завтра)(?=$|[^а-яa-z])/i.test(t)){
+    result.setDate(result.getDate()+1); return localKey(result);
+  }
+  if(/(^|[^а-яa-z])(сегодня)(?=$|[^а-яa-z])/i.test(t)){
+    return todayKey;
+  }
+
+  // Explicit numeric date: 18.08, 18/08, 18-08, "18 августа", "18-е", "на 18 число".
+  const months={января:0,январь:0,февраля:1,февраль:1,марта:2,март:2,апреля:3,апрель:3,мая:4,май:4,июня:5,июнь:5,июля:6,июль:6,августа:7,август:7,сентября:8,сентябрь:8,октября:9,октябрь:9,ноября:10,ноябрь:10,декабря:11,декабрь:11};
+  let m=t.match(/(?:^|[^0-9])(\d{1,2})[.\/-](\d{1,2})(?:[.\/-](\d{2,4}))?(?:$|[^0-9])/);
+  if(m){
+    const day=Number(m[1]), month=Number(m[2])-1, year=m[3]?Number(m[3].length===2?"20"+m[3]:m[3]):now.getFullYear();
+    const d=new Date(year,month,day);
+    if(d.getFullYear()===year&&d.getMonth()===month&&d.getDate()===day)return localKey(d);
+  }
+  m=t.match(/(?:^|[^0-9])(\d{1,2})(?:-?е)?(?:\s+числа)?\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)(?:\s+(20\d{2}))?(?:$|[^а-яa-z])/i);
+  if(m){
+    const day=Number(m[1]), month=months[m[2]], year=m[3]?Number(m[3]):now.getFullYear();
+    const d=new Date(year,month,day);
+    if(d.getFullYear()===year&&d.getMonth()===month&&d.getDate()===day)return localKey(d);
+  }
+  m=t.match(/(?:на|в|к)\s+(\d{1,2})(?:-?е)?(?:\s+число|\s+числа)?(?:\s|$)/i);
+  if(m){
+    const day=Number(m[1]);
+    if(day>=1&&day<=31){
+      let d=new Date(now.getFullYear(),now.getMonth(),day);
+      if(d.getDate()!==day)return null;
+      if(d<new Date(now.getFullYear(),now.getMonth(),now.getDate())) d=new Date(now.getFullYear(),now.getMonth()+1,day);
+      return localKey(d);
+    }
+  }
+
+  // Weekdays: "в понедельник", "на пятницу". Picks the next occurrence.
+  const weekdays={воскресенье:0,воскресенья:0,понедельник:1,понедельника:1,вторник:2,вторника:2,среда:3,среду:3,среды:3,четверг:4,четверга:4,пятница:5,пятницу:5,пятницы:5,суббота:6,субботу:6,субботы:6};
+  m=t.match(/(?:в|на)\s+(воскресенье|воскресенья|понедельник|понедельника|вторник|вторника|среда|среду|среды|четверг|четверга|пятница|пятницу|пятницы|суббота|субботу|субботы)(?:\s|$)/i);
+  if(m){
+    const target=weekdays[m[1]], delta=(target-now.getDay()+7)%7 || 7;
+    result.setDate(result.getDate()+delta); return localKey(result);
+  }
+  return null;
+}
+
+function addTask(text){
+  text=(text||document.getElementById("input").value).trim();
+  if(!text)return;
+  const explicitDate=dateFromText(text);
+  const taskDate=explicitDate || selectedDate;
+  tasks.unshift({id:Date.now(),text,done:false,date:taskDate});
+  selectedDate=taskDate;
+  const d=new Date(taskDate+"T12:00:00");
+  calendarMonth=new Date(d.getFullYear(),d.getMonth(),1);
+  document.getElementById("input").value="";
+  save();
+  renderCalendar();
+}
+function toggle(id){let t=tasks.find(x=>x.id===id);if(t)t.done=!t.done;save()}
+function del(id){tasks=tasks.filter(x=>x.id!==id);save()}
+function formatKey(key){
+ const [y,m,d]=key.split("-").map(Number);
+ return new Date(y,m-1,d).toLocaleDateString("ru-RU",{day:"numeric",month:"long",year:"numeric"});
+}
+function changeMonth(delta){calendarMonth=new Date(calendarMonth.getFullYear(),calendarMonth.getMonth()+delta,1);renderCalendar()}
+function toggleCalendar(){
+ const panel=document.getElementById("calendarPanel");
+ const open=panel.style.display!=="none";
+ panel.style.display=open?"none":"block";
+ document.getElementById("calendarArrow").textContent=open?"⌄":"⌃";
+}
+function goToday(){selectedDate=todayKey;calendarMonth=new Date(new Date().getFullYear(),new Date().getMonth(),1);renderCalendar();render()}
+function pickDate(y,m,d){selectedDate=`${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;renderCalendar();render()}
+function renderCalendar(){
+ const y=calendarMonth.getFullYear(), m=calendarMonth.getMonth();
+ document.getElementById("monthTitle").textContent=calendarMonth.toLocaleDateString("ru-RU",{month:"long",year:"numeric"});
+ const cal=document.getElementById("calendar");
+ const labels=["Пн","Вт","Ср","Чт","Пт","Сб","Вс"];
+ cal.innerHTML=labels.map(x=>`<div style="font-size:11px;text-align:center;color:#888">${x}</div>`).join("");
+ const first=new Date(y,m,1); let start=(first.getDay()+6)%7;
+ const days=new Date(y,m+1,0).getDate();
+ const prevDays=new Date(y,m,0).getDate();
+ for(let i=0;i<42;i++){
+   let day=i-start+1, yy=y, mm=m;
+   if(day<1){day=prevDays+day;mm=m-1;if(mm<0){mm=11;yy--}}
+   else if(day>days){day=day-days;mm=m+1;if(mm>11){mm=0;yy++}}
+   const key=`${yy}-${String(mm+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+   const btn=document.createElement("button");btn.type="button";btn.className="cal-day"+(mm!==m?" other ":"")+(key===selectedDate?" selected ":"")+(tasks.some(t=>t.date===key&&!t.done)?" has":"");
+   btn.textContent=day;btn.onclick=()=>pickDate(yy,mm,day);cal.appendChild(btn);
+ }
+ document.getElementById("selectedDate").textContent="Выбрано: "+formatKey(selectedDate);
+}
+function render(){
+  const box=document.getElementById("tasks");
+  const today=tasks.filter(t=>t.date===selectedDate);
+  if(!today.length) box.innerHTML='<div class="empty">Пока пусто.<br>Скажи мне первое дело 🎙️</div>';
+  else box.innerHTML=today.map(t=>`
+    <div class="task ${t.done?'done':''}">
+      <button class="check" onclick="toggle(${t.id})"></button>
+      <div style="flex:1"><div class="txt">${escapeHtml(t.text)}</div><div class="meta">${formatKey(t.date)}</div></div>
+      <button style="border:0;background:none;color:#aaa;font-size:18px" onclick="del(${t.id})">×</button>
+    </div>`).join("");
+  const done=today.filter(t=>t.done).length, total=today.length, pct=total?Math.round(done/total*100):0;
+  document.getElementById("count").textContent=`${done} / ${total} выполнено`;
+  document.getElementById("percent").textContent=pct+"%";
+  document.getElementById("bar").style.width=pct+"%";
+}
+function escapeHtml(s){return s.replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
+
+let recognition=null;
+function voiceInput(){
+  const Speech=window.SpeechRecognition||window.webkitSpeechRecognition;
+  const btn=document.getElementById("voice");
+  if(!Speech){
+    alert("Для голосового ввода открой Душку в Google Chrome на Android. Там нужен разрешённый микрофон.");
+    return;
+  }
+  if(recognition){recognition.stop();return;}
+  recognition=new Speech();
+  recognition.lang="ru-RU";
+  recognition.interimResults=true;
+  recognition.maxAlternatives=5;
+  recognition.continuous=false;
+  let finalText="";
+  btn.classList.add("listening");
+  btn.textContent="🔴 Слушаю…";
+  recognition.onresult=function(e){
+    let interim="";
+    for(let i=e.resultIndex;i<e.results.length;i++){
+      const piece=e.results[i][0]?.transcript||"";
+      if(e.results[i].isFinal) finalText+=piece+" "; else interim+=piece;
+    }
+    const shown=(finalText+interim).trim();
+    if(shown) btn.textContent="🎙️ "+shown.slice(0,42)+(shown.length>42?"…":"");
+  };
+  recognition.onerror=function(e){
+    if(e.error!=="aborted"){
+      let msg="Не удалось распознать речь. Попробуй говорить чуть ближе к телефону и без сильного шума.";
+      if(e.error==="not-allowed"||e.error==="service-not-allowed") msg="Chrome не получил доступ к микрофону. Разреши микрофон для Chrome в настройках телефона.";
+      if(e.error==="no-speech") msg="Я не услышала речь. Нажми кнопку ещё раз и скажи задачу после сигнала.";
+      alert(msg);
+    }
+  };
+  recognition.onend=function(){
+    const text=finalText.trim();
+    if(text) addTask(text);
+    btn.classList.remove("listening");
+    btn.textContent="🎙️ Сказать задачу";
+    recognition=null;
+  };
+  try{recognition.start()}catch(e){
+    recognition=null; btn.classList.remove("listening"); btn.textContent="🎙️ Сказать задачу";
+  }
+}
+document.getElementById("input").addEventListener("keydown",e=>{if(e.key==="Enter")addTask()});
+renderCalendar();
+render();
+</script>
+</body>
+</html>
